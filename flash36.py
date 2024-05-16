@@ -2,8 +2,8 @@
 import serial, sys, struct, time
 
 
-if len(sys.argv) != 3:
-    print ("usage: %s <port> <firmware.hex>" % sys.argv[0])
+if len(sys.argv) < 3:
+    print ("usage: %s <port> <firmware.hex> <ESC_idx>" % sys.argv[0])
     sys.exit(1)
 
 class PI():
@@ -11,7 +11,8 @@ class PI():
         self.ser = serial.Serial(com, 1000000, timeout = 1)
         time.sleep(2)
 
-    def conf(self,):
+
+    def conf(self):
 
         # init Programming Interface (PI)
         while True:
@@ -32,15 +33,23 @@ class PI():
             dump = self.ser.read(buf_size)
             assert(dump==bytes.fromhex(buf))
 
-    def prog(self, firmware):
+    def switch_esc(self, index):
+        cmd = int.to_bytes(index+7)
+        self.ser.write(cmd+b'\x00')
+        r = self.ser.read(1)
+        assert r == (cmd[0] + b'\x80'[0]).to_bytes(1,'big')
+
+    def prog(self, firmware, esc_index = 1):
 
         print ("Connected")
 
         #f = open(firmware,'r').readlines()
         f = firmware.splitlines()
-
+        self.switch_esc(esc_index)
         self.conf()
 
+        
+        print(f'Switched to ESC {esc_index}')
         # erase device
         self.ser.write(b'\x04\x00')
         assert self.ser.read(1)==b'\x84'
@@ -117,6 +126,9 @@ class PI():
 print ("Once")
 port=sys.argv[1]
 firmware=open(sys.argv[2], 'r').read()
+esc_idx= 1
+if len(sys.argv) > 3:
+    esc_idx = int(sys.argv[3])
 programmers = PI(port)
 
-programmers.prog(firmware)
+programmers.prog(firmware,esc_idx)

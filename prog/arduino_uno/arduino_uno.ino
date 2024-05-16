@@ -46,6 +46,27 @@ unsigned char c2_erase_device (void);
 
 uint8_t esc_c2d = ESC_1_C2D_GPIO;
 
+void switch_esc(uint8_t idx){
+
+  switch (idx)
+  {
+  case 1:
+    esc_c2d = ESC_1_C2D_GPIO;
+    break;
+  case 2:
+    esc_c2d = ESC_2_C2D_GPIO;
+    break;
+  case 3:
+    esc_c2d = ESC_3_C2D_GPIO;
+    break;   
+  case 4:
+    esc_c2d = ESC_4_C2D_GPIO;
+    break;
+  default:
+    break;
+  }
+}
+
 void c2_rst() {
   digitalWrite(C2CK_GPIO, LOW);
   delayMicroseconds(50);
@@ -250,7 +271,10 @@ void c2_write_addr(unsigned char addr) {
 void setup() {
   Serial.begin(1000000);
   
-  pinMode(esc_c2d, OUTPUT);
+  pinMode(ESC_1_C2D_GPIO, OUTPUT);
+  pinMode(ESC_2_C2D_GPIO, OUTPUT);
+  pinMode(ESC_3_C2D_GPIO, OUTPUT);
+  pinMode(ESC_4_C2D_GPIO, OUTPUT);
   pinMode(C2CK_GPIO, OUTPUT);
   
   digitalWrite(LED, LOW);
@@ -371,6 +395,26 @@ void loop() {
           c2_write_addr(rx_message[3]);
           Serial.write(c2_read_data());
           Serial.write(0x87);
+          rx_state = 0;
+          break;
+        case 0x08:
+          Serial.write(0x88);
+          switch_esc(1);
+          rx_state = 0;
+          break;
+        case 0x09:
+          Serial.write(0x89);
+          switch_esc(2);
+          rx_state = 0;
+          break;
+        case 0xa:
+          Serial.write(0x8a);
+          switch_esc(3);
+          rx_state = 0;
+          break;
+        case 0xb:
+          Serial.write(0x8b);
+          switch_esc(4);
           rx_state = 0;
           break;
       }
