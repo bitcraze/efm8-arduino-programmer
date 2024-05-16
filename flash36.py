@@ -26,6 +26,11 @@ class PI():
 
         print ("PI initiated")
 
+    def check_written(self, buf, buf_size):
+        self.ser.write(b'\x05\x00')
+        if(self.ser.read(1)==b'\x85'):
+            dump = self.ser.read(buf_size)
+            assert(dump==bytes.fromhex(buf))
 
     def prog(self, firmware):
 
@@ -81,6 +86,7 @@ class PI():
                         else:
                             print ("error flash write returned ", hex(ret))
                             raise RuntimeError('bad crc')
+                        self.check_written(buf,buf_size)
                         break
                     except Exception as e:
                         attempts += 1
