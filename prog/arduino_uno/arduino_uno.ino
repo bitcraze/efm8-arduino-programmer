@@ -9,13 +9,17 @@
 // Flashes EFM8 at about 10kB/s
 // Baud rate: 1000000
 
-// Digital pin 5 on uno
-#define C2D_GPIO  5
 
 // Digital pin 6 on uno. Port and pin nbr is needed for pulsing the clock
 #define C2CK_PORT   PORTD
 #define C2CK_PIN    6
 #define C2CK_GPIO   6
+
+
+#define ESC_1_C2D_GPIO 5
+#define ESC_2_C2D_GPIO 11
+#define ESC_3_C2D_GPIO 12
+#define ESC_4_C2D_GPIO 2
 
 
 
@@ -40,6 +44,7 @@ static unsigned char c2_poll_bit_high (unsigned char mask);
 unsigned char c2_write_flash_block (unsigned int addr, unsigned char * data, unsigned char len);
 unsigned char c2_erase_device (void);
 
+uint8_t esc_c2d = ESC_1_C2D_GPIO;
 
 void c2_rst() {
   digitalWrite(C2CK_GPIO, LOW);
@@ -57,27 +62,27 @@ static unsigned char c2_read_bits (unsigned char len) {
   unsigned char i, data, mask;
   mask = 0x01 << (len-1);
   data = 0;
-  pinMode(C2D_GPIO, INPUT);
+  pinMode(esc_c2d, INPUT);
   for (i=0;i<len;i++) {
     c2_pulse_clk();
     data = data >> 1;
-    if (digitalRead(C2D_GPIO) == HIGH) {
+    if (digitalRead(esc_c2d) == HIGH) {
       data = data | mask;
     }
   }
-  pinMode(C2D_GPIO, OUTPUT);
+  pinMode(esc_c2d, OUTPUT);
 
   return data;
 }
 
 static void c2_send_bits (unsigned char data, unsigned char len) {
   unsigned char i;
-  pinMode(C2D_GPIO, OUTPUT);
+  pinMode(esc_c2d, OUTPUT);
   for (i=0;i<len;i++) {
     if (data&0x01) {
-      digitalWrite(C2D_GPIO, HIGH);
+      digitalWrite(esc_c2d, HIGH);
     } else {
-      digitalWrite(C2D_GPIO, LOW);
+      digitalWrite(esc_c2d, LOW);
     }
     c2_pulse_clk();
     data = data >> 1;
@@ -245,7 +250,7 @@ void c2_write_addr(unsigned char addr) {
 void setup() {
   Serial.begin(1000000);
   
-  pinMode(C2D_GPIO, OUTPUT);
+  pinMode(esc_c2d, OUTPUT);
   pinMode(C2CK_GPIO, OUTPUT);
   
   digitalWrite(LED, LOW);
