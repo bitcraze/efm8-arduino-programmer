@@ -9,13 +9,19 @@
 // Flashes EFM8 at about 10kB/s
 // Baud rate: 1000000
 
-// Digital pin 5 on uno
-#define C2D_PORT  PORTD
-#define C2D_PIN   5
 
-// Digital pin 6 on uno
+// Digital pin 6 on uno. Port and pin nbr is needed for pulsing the clock
 #define C2CK_PORT   PORTD
 #define C2CK_PIN    6
+#define C2CK_GPIO   6
+
+
+#define ESC_1_C2D_GPIO 5
+#define ESC_2_C2D_GPIO 11
+#define ESC_3_C2D_GPIO 12
+#define ESC_4_C2D_GPIO 2
+
+
 
 #define LED LED_BUILTIN 
 
@@ -38,11 +44,33 @@ static unsigned char c2_poll_bit_high (unsigned char mask);
 unsigned char c2_write_flash_block (unsigned int addr, unsigned char * data, unsigned char len);
 unsigned char c2_erase_device (void);
 
+uint8_t esc_c2d = ESC_1_C2D_GPIO;
+
+void switch_esc(uint8_t idx){
+
+  switch (idx)
+  {
+  case 1:
+    esc_c2d = ESC_1_C2D_GPIO;
+    break;
+  case 2:
+    esc_c2d = ESC_2_C2D_GPIO;
+    break;
+  case 3:
+    esc_c2d = ESC_3_C2D_GPIO;
+    break;   
+  case 4:
+    esc_c2d = ESC_4_C2D_GPIO;
+    break;
+  default:
+    break;
+  }
+}
 
 void c2_rst() {
-  C2CK_PORT &= ~(1<<C2CK_PIN);
+  digitalWrite(C2CK_GPIO, LOW);
   delayMicroseconds(50);
-  C2CK_PORT |= (1<<C2CK_PIN);
+  digitalWrite(C2CK_GPIO, HIGH);
   delayMicroseconds(50);
 }
 
@@ -55,31 +83,27 @@ static unsigned char c2_read_bits (unsigned char len) {
   unsigned char i, data, mask;
   mask = 0x01 << (len-1);
   data = 0;
-  //pinMode(C2D, INPUT);
-  DDRD &= ~(1<<C2D_PIN);
-  PIND &= (1<<C2D_PIN);
+  pinMode(esc_c2d, INPUT);
   for (i=0;i<len;i++) {
     c2_pulse_clk();
     data = data >> 1;
-    if (PIND & (1<<C2D_PIN)) {
+    if (digitalRead(esc_c2d) == HIGH) {
       data = data | mask;
     }
   }
-  DDRD |= (1<<C2D_PIN);
-  //pinMode(C2D, OUTPUT);
+  pinMode(esc_c2d, OUTPUT);
 
   return data;
 }
 
 static void c2_send_bits (unsigned char data, unsigned char len) {
   unsigned char i;
-  //pinMode(C2D, OUTPUT);
-  DDRD |= (1<<C2D_PIN);
+  pinMode(esc_c2d, OUTPUT);
   for (i=0;i<len;i++) {
     if (data&0x01) {
-      C2D_PORT |= (1<<C2D_PIN);
+      digitalWrite(esc_c2d, HIGH);
     } else {
-      C2D_PORT &= ~(1<<C2D_PIN); 
+      digitalWrite(esc_c2d, LOW);
     }
     c2_pulse_clk();
     data = data >> 1;
@@ -247,11 +271,15 @@ void c2_write_addr(unsigned char addr) {
 void setup() {
   Serial.begin(1000000);
   
-  DDRD |= (1<<C2D_PIN);
-  DDRD |= (1<<C2CK_PIN);
-  C2CK_PORT |= (1<<C2CK_PIN);
+  pinMode(ESC_1_C2D_GPIO, OUTPUT);
+  pinMode(ESC_2_C2D_GPIO, OUTPUT);
+  pinMode(ESC_3_C2D_GPIO, OUTPUT);
+  pinMode(ESC_4_C2D_GPIO, OUTPUT);
+  pinMode(C2CK_GPIO, OUTPUT);
   
   digitalWrite(LED, LOW);
+  digitalWrite(C2CK_GPIO, HIGH);
+  delay(300);
 }
 
 unsigned int i;
@@ -367,6 +395,26 @@ void loop() {
           c2_write_addr(rx_message[3]);
           Serial.write(c2_read_data());
           Serial.write(0x87);
+          rx_state = 0;
+          break;
+        case 0x08:
+          Serial.write(0x88);
+          switch_esc(1);
+          rx_state = 0;
+          break;
+        case 0x09:
+          Serial.write(0x89);
+          switch_esc(2);
+          rx_state = 0;
+          break;
+        case 0xa:
+          Serial.write(0x8a);
+          switch_esc(3);
+          rx_state = 0;
+          break;
+        case 0xb:
+          Serial.write(0x8b);
+          switch_esc(4);
           rx_state = 0;
           break;
       }
