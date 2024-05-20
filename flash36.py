@@ -23,7 +23,7 @@ class PI():
                 break
             except:
                 print ("error com")			
-                while self.ser.read(1) != '': pass
+                sys.exit(1)
 
         print ("PI initiated")
 
