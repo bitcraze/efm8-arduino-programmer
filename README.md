@@ -1,24 +1,18 @@
 # Setting up
 
-C2 is a 2-pin protocol.  Any arduino should work to implement the protocol via GPIO.  Just need to make sure that the correct pins are mapped for your Arduino.  Check the [firmware file Arduino Mega](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/prog/arduino_mega.ino#L11) or [firmware file Arduino Uno](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/prog/arduino_uno.ino#L11) and change the pins to map to your device if needed.  Currently, it is:
-- for Arduino Mega and maps C2D and C2CK to digital pins 2 and 3, respectively.
-- for Arduino Uno and maps C2D and C2CK to digital pins 5 and 6, respectively.
+C2 is a 2-pin protocol for Arduino Uno. Just need to make sure that the correct pins are mapped for your Arduino Uno.  
 
-Program the firmware to the arduino and connect C2D, C2CK, and GND to your target device.
-# Firmware
-For RF Bridge [RF_Bridge](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/Firmware/RF_Bridge.hex)
-For Test blinking blue Led [Blinky Led](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/Firmware/Blinky_Led.hex)
+# Setup Arduino
+- Connect the clocks of all ESCs to Arduino Uno pin 6
+- C2D pins to Arduino pin 2,5,11 and 12. 
+- Connect GND to Arduino GND.
+- Program the Arduino Uno with [arduino_uno.ino](prog/arduino_uno/arduino_uno.ino)
+
 # Software
 
 You need to have Python installed.  Then, install some required python modules.
 
-Use Python 2.7 and Pyserial for [flash27.py](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/flash27.py)
-Version Select a serial speed  [SeepdFlash27.py](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/SeepdFlash27.py)
-
-Use Python 3.6 and Pyserial for [flash36.py](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/flash36.py)
-Version Select a serial speed  [SeepdFlash36.py](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/SeepdFlash36.py)
-
-Version executable Windows standalone   [flash27_EXE.zip](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/ExeForWindows/flash27_EXE.zip))
+Use Python 3.x and Pyserial for [flash36.py](https://github.com/christophe94700/efm8-arduino-programmer/blob/master/flash36.py)
 
 ```
 pip install -r requirements.txt
@@ -29,21 +23,15 @@ pip install -r requirements.txt
 Programming one target.
 
 ```
-python flash.py <serial-port> <firmware.hex>
+python flash36.py <serial-port> <firmware.hex>
 ```
 
 Example for Linux: 
 ```flash27.py /dev/ttyACM0 RF_Brige.hex```
-or 
-```sudo flash27.py /dev/ttyACM0 RF_Brige.hex```
 
-Example for Windows: ```python flash27.py COM8 RF_Bridge.hex```
-## Select a serial speed
-`python SeepdFlash27.py Com8 1000000 RF_Bridge.hex`
-## Windows standalone
-Unzip the ZIP archive flash27_EXE.zip.
+Example for Windows: 
+```python flash36.py COM8 RF_Bridge.hex```
 
-`flash27.exe com8 f:\test\RF_Bridge.hex`
 
 # Troubleshooting
 
