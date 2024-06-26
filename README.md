@@ -27,7 +27,7 @@ python flash36.py <serial-port> <firmware.hex>
 ```
 
 Example for Linux: 
-```flash27.py /dev/ttyACM0 RF_Brige.hex```
+```flash35.py /dev/ttyACM0 RF_Brige.hex```
 
 Example for Windows: 
 ```python flash36.py COM8 RF_Bridge.hex```
