@@ -118,8 +118,6 @@ class PI():
         self.ser.write(b'\x02\x00')
         assert self.ser.read(1)==b'\x82' 
 
-
-
         print ("Device reset")
 
 print ("Once")

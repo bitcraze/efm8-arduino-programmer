@@ -282,6 +282,14 @@ void setup() {
   delay(300);
 }
 
+void teardown() {
+  pinMode(ESC_1_C2D_GPIO, INPUT);
+  pinMode(ESC_2_C2D_GPIO, INPUT);
+  pinMode(ESC_3_C2D_GPIO, INPUT);
+  pinMode(ESC_4_C2D_GPIO, INPUT);
+  pinMode(C2CK_GPIO, INPUT);
+}
+
 unsigned int i;
 unsigned char retval;
 unsigned char rx_message[300],rx_message_ptr;
@@ -332,6 +340,7 @@ void loop() {
           break;
         case 0x02:
           c2_rst();
+          teardown();
           Serial.write(0x82);
           digitalWrite(LED, LOW);
           rx_state = 0;
