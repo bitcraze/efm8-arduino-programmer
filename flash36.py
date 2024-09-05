@@ -39,6 +39,14 @@ class PI():
         r = self.ser.read(1)
         assert r == (cmd[0] + b'\x80'[0]).to_bytes(1,'big')
 
+    def _isNextAddressAdjacent(self, thisLine, nextLine):
+        assert thisLine[7:9] == '00' and nextLine[7:9] == '00', "Lines must be data records"
+        thisStartAddr = int(thisLine[3:7], 16)
+        nextStartAddr = int(nextLine[3:7], 16)
+        thisByteCount = int(thisLine[1:3], 16)
+        thisEndAddr = thisStartAddr + thisByteCount
+        return thisEndAddr == nextStartAddr
+
     def prog(self, firmware, esc_index = 1):
 
         print ("Connected")
@@ -74,37 +82,37 @@ class PI():
             buf_size += size
 
             attempts = 0
-            while True:
-                try:
-                    print (hex(addrh), hex(addrl), buf)
-                    crc = addrh + addrl
-                    for i in range(0,len(buf),2):
-                        val=buf[i]+buf[i+1]
-                        crc+=int(val,16)					
-                    assert(len(buf)/2 == buf_size)
-    
-                    self.ser.write([0x3, buf_size + 4 + 1, buf_size, 0, addrh, addrl, crc & 0xff])
-                    for i in range(0,len(buf),2):
-                        val=buf[i]+buf[i+1]
-                        string = bytes.fromhex(val)
-                        self.ser.write(string)
-                    ret =self.ser.read(1)
-                    if ret == b'\x83':
-                        pass
-                    else:
-                        print ("error flash write returned ", hex(ret))
-                        raise RuntimeError('bad crc')
-                    self.check_written(buf,buf_size)
-                    break
-                except Exception as e:
-                    attempts += 1
-                    self.conf()
-                    print (e)
-                    print ("attempts:",attempts)
-            total += buf_size
-            buf_size = 0
-            buf = ''
-            print ("Wrote %d bytes" % total)
+            if buf_size >= 256-0x20 or i == f[-2] or (not self._isNextAddressAdjacent(i, f[f.index(i)+1])): #The hex file is not always in address order. We need to check this before concatenating the lines
+                while True:
+                    try:
+                        print (hex(addrh), hex(addrl), buf)
+                        crc = addrh + addrl
+                        for i in range(0,len(buf),2):
+                            val=buf[i]+buf[i+1]
+                            crc+=int(val,16)
+                        assert(len(buf)/2 == buf_size)
+                        self.ser.write([0x3, buf_size + 4 + 1, buf_size, 0, addrh, addrl, crc & 0xff])
+                        for i in range(0,len(buf),2):
+                            val=buf[i]+buf[i+1]
+                            string = bytes.fromhex(val)
+                            self.ser.write(string)
+                        ret =self.ser.read(1)
+                        if ret == b'\x83':
+                            pass
+                        else:
+                            print ("error flash write returned ", hex(ret))
+                            raise RuntimeError('bad crc')
+                        self.check_written(buf,buf_size)
+                        break
+                    except Exception as e:
+                        attempts += 1
+                        self.conf()
+                        print (e)
+                        print ("attempts:",attempts)
+                total += buf_size
+                buf_size = 0
+                buf = ''
+                print ("Wrote %d bytes" % total)
 
         # reset device
         self.ser.write(b'\x02\x00')
