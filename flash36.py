@@ -107,8 +107,8 @@ class PI():
                     except Exception as e:
                         attempts += 1
                         self.conf()
-                        print (e)
                         print ("attempts:",attempts)
+                        assert attempts < 10
                 total += buf_size
                 buf_size = 0
                 buf = ''
