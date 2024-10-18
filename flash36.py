@@ -100,13 +100,13 @@ class PI():
                         if ret == b'\x83':
                             pass
                         else:
-                            print ("error flash write returned ", hex(ret))
+                            print ("error flash write returned ", ret)
                             raise RuntimeError('bad crc')
                         self.check_written(buf,buf_size)
                         break
                     except Exception as e:
                         attempts += 1
-                        self.conf()
+                
                         print ("attempts:",attempts)
                         assert attempts < 10
                 total += buf_size

@@ -333,16 +333,16 @@ void loop() {
         Serial.write(0x80);
         break;
         case 0x01:
+   
           c2_init_PI();
-          Serial.write(0x81);
           digitalWrite(LED, HIGH);
+          Serial.write(0x81);
           rx_state = 0;
           break;
         case 0x02:
           c2_rst();
           teardown();
           Serial.write(0x82);
-          digitalWrite(LED, LOW);
           rx_state = 0;
           break;
         case 0x03:
@@ -429,4 +429,5 @@ void loop() {
       }
     }
   }
+  teardown();
 }
