@@ -429,5 +429,4 @@ void loop() {
       }
     }
   }
-  teardown();
 }
