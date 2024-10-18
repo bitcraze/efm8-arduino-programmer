@@ -213,6 +213,12 @@ unsigned char c2_write_sfr (unsigned char addr, unsigned char val) {
 }
 
 unsigned char c2_init_PI (void) {
+  pinMode(ESC_1_C2D_GPIO, OUTPUT);
+  pinMode(ESC_2_C2D_GPIO, OUTPUT);
+  pinMode(ESC_3_C2D_GPIO, OUTPUT);
+  pinMode(ESC_4_C2D_GPIO, OUTPUT);
+  pinMode(C2CK_GPIO, OUTPUT);
+  
   c2_rst();
   c2_write_addr(0x02);
   c2_write_data(0x02);
@@ -271,11 +277,11 @@ void c2_write_addr(unsigned char addr) {
 void setup() {
   Serial.begin(1000000);
   
-  pinMode(ESC_1_C2D_GPIO, OUTPUT);
-  pinMode(ESC_2_C2D_GPIO, OUTPUT);
-  pinMode(ESC_3_C2D_GPIO, OUTPUT);
-  pinMode(ESC_4_C2D_GPIO, OUTPUT);
-  pinMode(C2CK_GPIO, OUTPUT);
+  pinMode(ESC_1_C2D_GPIO, INPUT);
+  pinMode(ESC_2_C2D_GPIO, INPUT);
+  pinMode(ESC_3_C2D_GPIO, INPUT);
+  pinMode(ESC_4_C2D_GPIO, INPUT);
+  pinMode(C2CK_GPIO, INPUT);
   
   digitalWrite(LED, LOW);
   digitalWrite(C2CK_GPIO, HIGH);
