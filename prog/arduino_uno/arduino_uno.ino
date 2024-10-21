@@ -69,9 +69,9 @@ void switch_esc(uint8_t idx){
 
 void c2_rst() {
   digitalWrite(C2CK_GPIO, LOW);
-  delayMicroseconds(50);
+  delayMicroseconds(55);
   digitalWrite(C2CK_GPIO, HIGH);
-  delayMicroseconds(50);
+  delayMicroseconds(55);
 }
 
 #define c2_pulse_clk()\
@@ -213,10 +213,7 @@ unsigned char c2_write_sfr (unsigned char addr, unsigned char val) {
 }
 
 unsigned char c2_init_PI (void) {
-  pinMode(ESC_1_C2D_GPIO, OUTPUT);
-  pinMode(ESC_2_C2D_GPIO, OUTPUT);
-  pinMode(ESC_3_C2D_GPIO, OUTPUT);
-  pinMode(ESC_4_C2D_GPIO, OUTPUT);
+  pinMode(esc_c2d, OUTPUT);
   pinMode(C2CK_GPIO, OUTPUT);
   
   c2_rst();
@@ -281,7 +278,7 @@ void setup() {
   pinMode(ESC_2_C2D_GPIO, INPUT);
   pinMode(ESC_3_C2D_GPIO, INPUT);
   pinMode(ESC_4_C2D_GPIO, INPUT);
-  pinMode(C2CK_GPIO, INPUT);
+  pinMode(C2CK_GPIO, OUTPUT);
   
   digitalWrite(LED, LOW);
   digitalWrite(C2CK_GPIO, HIGH);
@@ -289,11 +286,12 @@ void setup() {
 }
 
 void teardown() {
+  digitalWrite(esc_c2d, LOW);
   pinMode(ESC_1_C2D_GPIO, INPUT);
   pinMode(ESC_2_C2D_GPIO, INPUT);
   pinMode(ESC_3_C2D_GPIO, INPUT);
   pinMode(ESC_4_C2D_GPIO, INPUT);
-  pinMode(C2CK_GPIO, INPUT);
+  pinMode(C2CK_GPIO, OUTPUT);
 }
 
 unsigned int i;
