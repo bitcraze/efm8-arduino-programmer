@@ -91,7 +91,7 @@ static unsigned char c2_read_bits (unsigned char len) {
       data = data | mask;
     }
   }
-  pinMode(esc_c2d, OUTPUT);
+  //pinMode(esc_c2d, OUTPUT);
 
   return data;
 }
@@ -108,6 +108,7 @@ static void c2_send_bits (unsigned char data, unsigned char len) {
     c2_pulse_clk();
     data = data >> 1;
   }
+  pinMode(esc_c2d, INPUT);
 }
 
 static void c2_write_data (unsigned char data) {
@@ -187,6 +188,7 @@ unsigned char c2_erase_device (void) {
   c2_poll_bit_low(INBUSY);
   c2_poll_bit_high(OUTREADY);
   retval = c2_read_data();
+  if (retval != 0x0D) return 0;
   c2_write_data(0xDE);
   c2_poll_bit_low(INBUSY);  
   c2_write_data(0xAD);
@@ -195,6 +197,8 @@ unsigned char c2_erase_device (void) {
   c2_poll_bit_low(INBUSY);  
   c2_poll_bit_high(OUTREADY);
   retval = c2_read_data();
+  if(retval != 0x0D) return 0;
+  return 1;
 }
 
 unsigned char c2_write_sfr (unsigned char addr, unsigned char val) {
@@ -213,17 +217,20 @@ unsigned char c2_write_sfr (unsigned char addr, unsigned char val) {
 }
 
 unsigned char c2_init_PI (void) {
-  pinMode(esc_c2d, OUTPUT);
+ // pinMode(esc_c2d, OUTPUT);
   pinMode(C2CK_GPIO, OUTPUT);
-  
   c2_rst();
   c2_write_addr(0x02);
+  //Unlock flash for writing
   c2_write_data(0x02);
   c2_write_data(0x04);
   c2_write_data(0x01);
+  delay(20);
   return 0;
 }
 
+
+//Not used
 unsigned char c2_init_PI_sfr (void) {
   c2_rst();
   c2_write_addr(0x02);
@@ -337,9 +344,7 @@ void loop() {
         Serial.write(0x80);
         break;
         case 0x01:
-   
           c2_init_PI();
-          digitalWrite(LED, HIGH);
           Serial.write(0x81);
           rx_state = 0;
           break;
