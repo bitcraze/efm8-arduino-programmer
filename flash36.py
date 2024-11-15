@@ -24,7 +24,7 @@ class PI():
             except:
                 print ("error com")			
                 sys.exit(1)
-
+        time.sleep(0.5)
         print ("PI initiated")
 
     def check_written(self, buf, buf_size):
