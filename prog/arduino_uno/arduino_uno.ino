@@ -285,7 +285,7 @@ void setup() {
   pinMode(ESC_2_C2D_GPIO, INPUT);
   pinMode(ESC_3_C2D_GPIO, INPUT);
   pinMode(ESC_4_C2D_GPIO, INPUT);
-  pinMode(C2CK_GPIO, OUTPUT);
+  pinMode(C2CK_GPIO, INPUT);
   
   digitalWrite(LED, LOW);
   digitalWrite(C2CK_GPIO, HIGH);
@@ -298,7 +298,7 @@ void teardown() {
   pinMode(ESC_2_C2D_GPIO, INPUT);
   pinMode(ESC_3_C2D_GPIO, INPUT);
   pinMode(ESC_4_C2D_GPIO, INPUT);
-  pinMode(C2CK_GPIO, OUTPUT);
+  pinMode(C2CK_GPIO, INPUT);
 }
 
 unsigned int i;
