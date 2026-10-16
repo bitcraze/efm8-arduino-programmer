@@ -28,6 +28,15 @@
 #define  INBUSY    0x02
 #define OUTREADY  0x01
 
+// Debug lines share the binary serial channel; use the updated flash36.py.
+// Set to 0 when using other flasher scripts. Never print inside C2 bit pulses.
+#define C2_DEBUG 0
+#if C2_DEBUG
+#define C2_TRACE(message) Serial.println(F("#DBG " message))
+#else
+#define C2_TRACE(message) do {} while (0)
+#endif
+
 static void c2_send_bits (unsigned char data, unsigned char len);
 static unsigned char c2_read_bits (unsigned char len);
 
@@ -68,16 +77,25 @@ void switch_esc(uint8_t idx){
 }
 
 void c2_rst() {
+  // teardown() releases C2CK; retries must enable its driver again.
+  pinMode(C2CK_GPIO, OUTPUT);
   digitalWrite(C2CK_GPIO, LOW);
   delayMicroseconds(55);
   digitalWrite(C2CK_GPIO, HIGH);
   delayMicroseconds(55);
 }
 
-#define c2_pulse_clk()\
+// At 16 MHz: 2 delay cycles + 2 cycles for PORTD's SBI = 250 ns low.
+// An ISR stretched this to 6.5+ us in captures (C2 permits at most 5 us).
+// Preserve interrupt state and protect only the clock-low interval.
+#define c2_pulse_clk() do { \
+  uint8_t c2_saved_sreg = SREG; \
+  cli(); \
   C2CK_PORT &= ~(1<<C2CK_PIN); \
-  C2CK_PORT |= (1<<C2CK_PIN);
-
+  __builtin_avr_delay_cycles(2); \
+  C2CK_PORT |= (1<<C2CK_PIN); \
+  SREG = c2_saved_sreg; \
+} while (0)
 
 static unsigned char c2_read_bits (unsigned char len) {
   unsigned char i, data, mask;
@@ -183,20 +201,41 @@ unsigned char c2_write_flash_block (unsigned int addr, unsigned char * data, uns
 
 unsigned char c2_erase_device (void) {
   unsigned char retval;
+  C2_TRACE("erase: select FP data register 0xB4");
   c2_write_addr(0xB4);
+  C2_TRACE("erase: send command 0x03 (waiting for C2 write handshake)");
   c2_write_data(0x03);
+  C2_TRACE("erase: wait INBUSY low");
   c2_poll_bit_low(INBUSY);
+  C2_TRACE("erase: wait OUTREADY high");
   c2_poll_bit_high(OUTREADY);
+  C2_TRACE("erase: read command status (waiting for C2 read handshake)");
   retval = c2_read_data();
+#if C2_DEBUG
+  Serial.print(F("#DBG erase: command status=0x"));
+  Serial.println(retval, HEX);
+#endif
   if (retval != 0x0D) return 0;
+  C2_TRACE("erase: send key 0xDE");
   c2_write_data(0xDE);
+  C2_TRACE("erase: key 0xDE, wait INBUSY low");
   c2_poll_bit_low(INBUSY);  
+  C2_TRACE("erase: send key 0xAD");
   c2_write_data(0xAD);
+  C2_TRACE("erase: key 0xAD, wait INBUSY low");
   c2_poll_bit_low(INBUSY);  
+  C2_TRACE("erase: send key 0xA5");
   c2_write_data(0xA5);
+  C2_TRACE("erase: key 0xA5, wait INBUSY low");
   c2_poll_bit_low(INBUSY);  
+  C2_TRACE("erase: wait completion OUTREADY high");
   c2_poll_bit_high(OUTREADY);
+  C2_TRACE("erase: read completion status");
   retval = c2_read_data();
+#if C2_DEBUG
+  Serial.print(F("#DBG erase: completion status=0x"));
+  Serial.println(retval, HEX);
+#endif
   if(retval != 0x0D) return 0;
   return 1;
 }
@@ -217,15 +256,20 @@ unsigned char c2_write_sfr (unsigned char addr, unsigned char val) {
 }
 
 unsigned char c2_init_PI (void) {
+  C2_TRACE("init: reset target");
  // pinMode(esc_c2d, OUTPUT);
   pinMode(C2CK_GPIO, OUTPUT);
   c2_rst();
   c2_write_addr(0x02);
   //Unlock flash for writing
+  C2_TRACE("init: write FPCTL 0x02");
   c2_write_data(0x02);
+  C2_TRACE("init: write FPCTL 0x04");
   c2_write_data(0x04);
+  C2_TRACE("init: write FPCTL 0x01");
   c2_write_data(0x01);
   delay(20);
+  C2_TRACE("init: sequence completed (target readiness not checked)");
   return 0;
 }
 
@@ -272,10 +316,10 @@ static unsigned char c2_read_addr() {
 }
 
 void c2_write_addr(unsigned char addr) {
-  c2_send_bits(0x0,1);
+  c2_send_bits(0x0, 1);
   c2_send_bits(0x3,2);
   c2_send_bits(addr,8);
-  c2_send_bits(0x0,1);  
+  c2_send_bits(0x0, 1);
 }
 
 void setup() {
@@ -390,11 +434,29 @@ void loop() {
           rx_state = 0;
           break;
         case 0x04:
-          c2_erase_device();
-          Serial.write(0x84);
+          C2_TRACE("erase: command received");
+#if C2_DEBUG
+          Serial.print(F("#DBG pins: C2CK="));
+          Serial.print(C2CK_GPIO);
+          Serial.print(F(" C2D="));
+          Serial.println(esc_c2d);
+#endif
+          c = c2_erase_device();
+#if C2_DEBUG
+          Serial.print(F("#DBG erase: result="));
+          Serial.println(c);
+#endif
+          // 0x44 is an erase failure, never acknowledge a failed erase as success.
+          Serial.write(c ? 0x84 : 0x44);
           rx_state = 0;
           break;
         case 0x05:
+          // Reject old/incomplete readback frames instead of using stale buffer bytes.
+          if (rx_message[1] != 4 || rx_message[2] == 0 || rx_message[3] != 0) {
+            Serial.write(0x45);
+            rx_state = 0;
+            break;
+          }
           Serial.write(0x85);
           addr = (((unsigned long)(rx_message[3]))<<16) + (((unsigned long)(rx_message[4]))<<8) + (((unsigned long)(rx_message[5]))<<0);
           c2_read_flash_block(addr,flash_buffer,rx_message[2]);

@@ -9,7 +9,34 @@ if len(sys.argv) < 3:
 class PI():
     def __init__(self, com):
         self.ser = serial.Serial(com, 1000000, timeout = 1)
+        print(f"Serial opened: {com}, baud={self.ser.baudrate}, timeout={self.ser.timeout}s", flush=True)
         time.sleep(2)
+
+    def expect_ack(self, expected, operation):
+        """Read a binary acknowledgement, allowing #DBG lines from the Uno."""
+        started = time.monotonic()
+        deadline = started + 5
+        print(f"[TX] {operation}: waiting for 0x{expected:02x}", flush=True)
+        while time.monotonic() < deadline:
+            response = self.ser.read(1)
+            if response == b'#':
+                line = self.ser.readline()
+                print("[Arduino] #" + line.decode('ascii', errors='replace').rstrip(), flush=True)
+                continue
+            if not response:
+                continue
+            elapsed = time.monotonic() - started
+            print(f"[RX] {operation}: {response.hex(' ')} after {elapsed:.3f}s", flush=True)
+            if response == b'\x44':
+                raise RuntimeError("Target erase failed; flashing stopped. See Arduino C2 status above.")
+            if response != bytes([expected]):
+                raise RuntimeError(f"{operation}: expected 0x{expected:02x}, received {response!r}")
+            return
+        raise TimeoutError(
+            f"{operation}: no acknowledgement 0x{expected:02x} within 5s; "
+            f"serial bytes pending={self.ser.in_waiting}. "
+            "Check the last Arduino C2 stage above (if the debug sketch is installed)."
+        )
 
 
     def conf(self):
@@ -18,26 +45,39 @@ class PI():
         while True:
             try:
                 self.ser.write(b'\x01\x00')
-                x=self.ser.read(1)
-                assert x == b'\x81'
+                self.expect_ack(0x81, "PI init (01 00)")
                 break
-            except:
-                print ("error com")			
+            except Exception as exc:
+                print (f"error com: {exc}")
                 sys.exit(1)
         time.sleep(0.5)
         print ("PI initiated")
 
-    def check_written(self, buf, buf_size):
-        self.ser.write(b'\x05\x00')
-        if(self.ser.read(1)==b'\x85'):
-            dump = self.ser.read(buf_size)
-            assert(dump==bytes.fromhex(buf))
+    def check_written(self, buf, buf_size, address):
+        # Four payload bytes: count, address[23:16], address[15:8], address[7:0].
+        self.ser.write(bytes([0x05, 0x04, buf_size]) + address.to_bytes(3, 'big'))
+        self.expect_ack(0x85, f"Readback at 0x{address:04x}, {buf_size} bytes")
+        dump = self.ser.read(buf_size)
+        if dump != bytes.fromhex(buf):
+            raise RuntimeError(f"Readback mismatch at 0x{address:04x}: expected {buf}, got {dump.hex()} ({len(dump)}/{buf_size} bytes)")
+
+    def reset_device(self):
+        for attempt in range(1, 6):
+            try:
+                self.ser.write(b'\x02\x00')
+                self.expect_ack(0x82, f"Device reset (02 00), attempt {attempt}/5")
+                print("Device reset")
+                return
+            except (TimeoutError, RuntimeError) as exc:
+                print(f"Reset attempt {attempt}/5 failed: {exc}", flush=True)
+                if attempt == 5:
+                    raise RuntimeError("Device reset failed after 5 attempts") from exc
+                time.sleep(0.1)
 
     def switch_esc(self, index):
-        cmd = int.to_bytes(index+7)
+        cmd = int.to_bytes((index+7), length=1, byteorder='big')
         self.ser.write(cmd+b'\x00')
-        r = self.ser.read(1)
-        assert r == (cmd[0] + b'\x80'[0]).to_bytes(1,'big')
+        self.expect_ack(cmd[0] + 0x80, f"Select ESC {index} ({cmd.hex()} 00)")
 
     def _isNextAddressAdjacent(self, thisLine, nextLine):
         assert thisLine[7:9] == '00' and nextLine[7:9] == '00', "Lines must be data records"
@@ -60,7 +100,7 @@ class PI():
         print(f'Switched to ESC {esc_index}')
         # erase device
         self.ser.write(b'\x04\x00')
-        assert self.ser.read(1)==b'\x84'
+        self.expect_ack(0x84, "Device erase (04 00)")
 
         print ("Device erased")
 		
@@ -81,11 +121,9 @@ class PI():
             buf += data
             buf_size += size
 
-            attempts = 0
             if buf_size >= 256-0x20 or i == f[-2] or (not self._isNextAddressAdjacent(i, f[f.index(i)+1])): #The hex file is not always in address order. We need to check this before concatenating the lines
                 while True:
                     try:
-                        print (hex(addrh), hex(addrl), buf)
                         crc = addrh + addrl
                         for i in range(0,len(buf),2):
                             val=buf[i]+buf[i+1]
@@ -96,37 +134,18 @@ class PI():
                             val=buf[i]+buf[i+1]
                             string = bytes.fromhex(val)
                             self.ser.write(string)
-                        ret =self.ser.read(1)
-                        if ret == b'\x83':
-                            pass
-                        else:
-                            print ("error flash write returned ", ret)
-                            raise RuntimeError('bad crc')
-                        self.check_written(buf,buf_size)
+                        self.expect_ack(0x83, f"Flash write at 0x{addrh:02x}{addrl:02x}, {buf_size} bytes")
+                        self.check_written(buf,buf_size, (addrh << 8) | addrl)
                         break
                     except Exception as e:
-                        attempts += 1
-                
-                        print ("attempts:",attempts)
-                        assert attempts < 10
+                        # Late replies could be mistaken for ACKs if we retry here.
+                        raise RuntimeError(f"Flashing stopped at 0x{addrh:02x}{addrl:02x}: {e}") from e
                 total += buf_size
                 buf_size = 0
                 buf = ''
                 print ("Wrote %d bytes" % total)
 
-        # reset device
-        self.ser.write(b'\x02\x00')
-        assert self.ser.read(1)==b'\x82' 
-
-        # reset device
-        self.ser.write(b'\x02\x00')
-        assert self.ser.read(1)==b'\x82' 
-
-        # reset device
-        self.ser.write(b'\x02\x00')
-        assert self.ser.read(1)==b'\x82' 
-
-        print ("Device reset")
+        self.reset_device()
 
 print ("Once")
 port=sys.argv[1]
