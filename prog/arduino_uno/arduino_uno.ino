@@ -55,6 +55,50 @@ unsigned char c2_erase_device (void);
 
 uint8_t esc_c2d = ESC_1_C2D_GPIO;
 
+// Bound the entire serial command, including all nested C2 polling loops.
+// A timeout stays latched until an explicit PI init or reset command.
+const unsigned long C2_COMMAND_TIMEOUT_MS = 1000;
+const unsigned long C2_ERASE_TIMEOUT_MS = 10000;
+unsigned long c2_command_timeout_ms = C2_COMMAND_TIMEOUT_MS;
+unsigned long c2_command_started;
+bool c2_failed = false;
+uint8_t c2_error = 0x40;
+// Block stages: 1=command, 2=address high, 3=address low, 4=length,
+// 5=data, 6=completion. Waits: 1=write handshake, 2=read handshake,
+// 3=OUTREADY high, 4=INBUSY low.
+uint8_t c2_stage = 0, c2_wait = 0, c2_byte = 0;
+
+void teardown();
+
+static bool c2_can_continue() {
+  if (c2_failed) return false;
+  if ((unsigned long)(millis() - c2_command_started) >= c2_command_timeout_ms) {
+    c2_failed = true;
+    teardown();
+    C2_TRACE("C2 command timed out; clock stopped and pins released");
+#if C2_DEBUG
+    Serial.print(F("#DBG timeout stage=")); Serial.print(c2_stage);
+    Serial.print(F(" byte=")); Serial.print(c2_byte);
+    Serial.print(F(" wait=")); Serial.println(c2_wait);
+#endif
+    return false;
+  }
+  return true;
+}
+
+static bool c2_check_status(uint8_t status) {
+  if (c2_failed) return false;
+  if (status == 0x0D) return true;
+  c2_failed = true;
+  c2_error = 0x41;
+  teardown();
+#if C2_DEBUG
+  Serial.print(F("#DBG C2 rejected block stage=")); Serial.print(c2_stage);
+  Serial.print(F(" status=0x")); Serial.println(status, HEX);
+#endif
+  return false;
+}
+
 void switch_esc(uint8_t idx){
 
   switch (idx)
@@ -80,24 +124,33 @@ void c2_rst() {
   // teardown() releases C2CK; retries must enable its driver again.
   pinMode(C2CK_GPIO, OUTPUT);
   digitalWrite(C2CK_GPIO, LOW);
-  delayMicroseconds(55);
+  delayMicroseconds(100);
   digitalWrite(C2CK_GPIO, HIGH);
-  delayMicroseconds(55);
+  delayMicroseconds(500);
 }
 
-// At 16 MHz: 2 delay cycles + 2 cycles for PORTD's SBI = 250 ns low.
+// At 16 MHz: 4 delay cycles + 2 cycles for PORTD's SBI = 375 ns low.
 // An ISR stretched this to 6.5+ us in captures (C2 permits at most 5 us).
 // Preserve interrupt state and protect only the clock-low interval.
 #define c2_pulse_clk() do { \
   uint8_t c2_saved_sreg = SREG; \
   cli(); \
   C2CK_PORT &= ~(1<<C2CK_PIN); \
-  __builtin_avr_delay_cycles(2); \
+  __builtin_avr_delay_cycles(4); \
   C2CK_PORT |= (1<<C2CK_PIN); \
   SREG = c2_saved_sreg; \
 } while (0)
 
+// START and STOP are clock strobes with the master's data driver disabled.
+static void c2_frame_strobe() {
+  if (!c2_can_continue()) return;
+  pinMode(esc_c2d, INPUT);
+  digitalWrite(esc_c2d, LOW); // Disable the Uno's internal pull-up as well.
+  c2_pulse_clk();
+}
+
 static unsigned char c2_read_bits (unsigned char len) {
+  if (!c2_can_continue()) return 0;
   unsigned char i, data, mask;
   mask = 0x01 << (len-1);
   data = 0;
@@ -115,6 +168,7 @@ static unsigned char c2_read_bits (unsigned char len) {
 }
 
 static void c2_send_bits (unsigned char data, unsigned char len) {
+  if (!c2_can_continue()) return;
   unsigned char i;
   pinMode(esc_c2d, OUTPUT);
   for (i=0;i<len;i++) {
@@ -131,45 +185,57 @@ static void c2_send_bits (unsigned char data, unsigned char len) {
 
 static void c2_write_data (unsigned char data) {
   unsigned char retval;
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
   c2_send_bits(0x1, 2);
   c2_send_bits(0x0, 2);
   c2_send_bits(data, 8);
   retval = 0;
-  while (retval == 0) {
+  c2_wait = 1;
+  while (retval == 0 && c2_can_continue()) {
     retval = c2_read_bits(1);
   }
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
 }
 
 static unsigned char c2_poll_bit_high (unsigned char mask) {
+  c2_wait = 3;
   unsigned char retval;
   retval = c2_read_addr();
-  while ((retval&mask)==0) retval = c2_read_addr();
+  while ((retval&mask)==0 && c2_can_continue()) retval = c2_read_addr();
+  return retval;
 }
 
 static unsigned char c2_poll_bit_low (unsigned char mask) {
+  c2_wait = 4;
   unsigned char retval;
   retval = c2_read_addr();
-  while (retval&mask) retval = c2_read_addr();
+  while (retval&mask && c2_can_continue()) retval = c2_read_addr();
+  return retval;
 }
 
 unsigned char c2_read_flash_block (unsigned int addr, unsigned char * data, unsigned char len) {
   unsigned char retval,i;
+  c2_stage = 1;
   c2_write_addr(0xB4);
   c2_write_data(0x06);
   c2_poll_bit_low(INBUSY);
   c2_poll_bit_high(OUTREADY);
   retval = c2_read_data();
+  if (!c2_check_status(retval)) return 0;
+  c2_stage = 2;
   c2_write_data(addr>>8);
   c2_poll_bit_low(INBUSY);
+  c2_stage = 3;
   c2_write_data(addr&0xFF);
   c2_poll_bit_low(INBUSY);
+  c2_stage = 4;
   c2_write_data(len);
   c2_poll_bit_low(INBUSY);
   c2_poll_bit_high(OUTREADY);
   retval = c2_read_data();
+  if (!c2_check_status(retval)) return 0;
   for (i=0;i<len;i++) {
+    c2_stage = 5; c2_byte = i;
     c2_poll_bit_high(OUTREADY);
     retval = c2_read_data();
     data[i] = retval;
@@ -179,24 +245,36 @@ unsigned char c2_read_flash_block (unsigned int addr, unsigned char * data, unsi
 
 unsigned char c2_write_flash_block (unsigned int addr, unsigned char * data, unsigned char len) {
   unsigned char retval,i;
+  c2_stage = 1;
   c2_write_addr(0xB4);
   c2_write_data(0x07);
   c2_poll_bit_low(INBUSY);
   c2_poll_bit_high(OUTREADY);
   retval = c2_read_data();
+#if C2_DEBUG
+  Serial.print(F("#DBG write command status=0x")); Serial.println(retval, HEX);
+#endif
+  if (!c2_check_status(retval)) return 0;
+  c2_stage = 2;
   c2_write_data(addr>>8);
   c2_poll_bit_low(INBUSY);
+  c2_stage = 3;
   c2_write_data(addr&0xFF);
   c2_poll_bit_low(INBUSY);
+  c2_stage = 4;
   c2_write_data(len);
   c2_poll_bit_low(INBUSY);  
-  c2_poll_bit_high(OUTREADY);
-  retval = c2_read_data();  
+  // AN127: after length/INBUSY, send data without reading another status.
   for (i=0;i<len;i++) {
+    c2_stage = 5; c2_byte = i;
     c2_write_data(data[i] );
     c2_poll_bit_low(INBUSY);
   } 
+  c2_stage = 6;
   c2_poll_bit_high(OUTREADY);
+  // Consume and validate completion before issuing another PI command.
+  retval = c2_read_data();
+  return c2_check_status(retval);
 }
 
 unsigned char c2_erase_device (void) {
@@ -269,7 +347,32 @@ unsigned char c2_init_PI (void) {
   C2_TRACE("init: write FPCTL 0x01");
   c2_write_data(0x01);
   delay(20);
-  C2_TRACE("init: sequence completed (target readiness not checked)");
+  // An undriven C2D line can appear to complete every write handshake.
+  // Read the device identity before claiming that initialization succeeded.
+  c2_write_addr(0x00);
+  unsigned char device_id = c2_read_data();
+#if C2_DEBUG
+  Serial.print(F("#DBG init: device ID=0x")); Serial.println(device_id, HEX);
+#endif
+  if (!c2_failed && device_id == 0xFF) {
+    c2_failed = true;
+    c2_error = 0x42;
+    teardown();
+    C2_TRACE("init: invalid device ID; target communication not established");
+  }
+  if (!c2_failed && device_id == 0x32) {
+    // EFM8BB2 setup from AN127 table 3.6. These use direct C2 SFR
+    // accesses, not the PI Direct Write command used by c2_write_sfr().
+    C2_TRACE("init: EFM8BB2 VDD monitor and oscillator setup");
+    c2_write_addr(0xFF);
+    c2_write_data(0x80);
+    delayMicroseconds(5);
+    c2_write_addr(0xEF);
+    c2_write_data(0x02);
+    c2_write_addr(0xA9);
+    c2_write_data(0x00);
+  }
+  if (!c2_failed) C2_TRACE("init: sequence completed; device identity responded");
   return 0;
 }
 
@@ -294,32 +397,35 @@ unsigned char c2_init_PI_sfr (void) {
 
 static unsigned char c2_read_data() {
   unsigned char retval;
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
   c2_send_bits(0x0, 2);
   c2_send_bits(0x0, 2);
   retval = 0;
-  while (retval == 0) {
+  c2_wait = 2;
+  while (retval == 0 && c2_can_continue()) {
     retval = c2_read_bits(1);
   }
   retval = c2_read_bits(8);
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
   return retval;
 }
 
 static unsigned char c2_read_addr() {
+  if (!c2_can_continue()) return 0;
   unsigned char retval;
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
   c2_send_bits(0x2, 2);
   retval = c2_read_bits(8);
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
   return retval;
 }
 
 void c2_write_addr(unsigned char addr) {
-  c2_send_bits(0x0, 1);
+  if (!c2_can_continue()) return;
+  c2_frame_strobe();
   c2_send_bits(0x3,2);
   c2_send_bits(addr,8);
-  c2_send_bits(0x0, 1);
+  c2_frame_strobe();
 }
 
 void setup() {
@@ -383,13 +489,26 @@ void loop() {
     rx = Serial.read();
     rx_state = rx_state_machine(rx_state, rx);
     if (rx_state == 3) {
+      c2_command_started = millis();
+      c2_command_timeout_ms = rx_message[0] == 0x04
+          ? C2_ERASE_TIMEOUT_MS : C2_COMMAND_TIMEOUT_MS;
+      c2_stage = 0; c2_wait = 0; c2_byte = 0;
+      if (rx_message[0] == 0x01 || rx_message[0] == 0x02) {
+        c2_failed = false;
+        c2_error = 0x40;
+      } else if (c2_failed && rx_message[0] >= 0x03 && rx_message[0] <= 0x07) {
+        // Do not restart a timed-out transfer when more host bytes arrive.
+        Serial.write(c2_error);
+        rx_state = 0;
+        return;
+      }
       switch (rx_message[0]) {
         case 0x0:
         Serial.write(0x80);
         break;
         case 0x01:
           c2_init_PI();
-          Serial.write(0x81);
+          if (!c2_failed) Serial.write(0x81);
           rx_state = 0;
           break;
         case 0x02:
@@ -415,6 +534,7 @@ void loop() {
           if (crc != newcrc)
           {
             Serial.write(0x43);
+            rx_state = 0;
             break;
           }
 
@@ -430,7 +550,7 @@ void loop() {
           //  c -= min(c, 4);
           //}
           //delay(1);
-          Serial.write(0x83);
+          if (!c2_failed) Serial.write(0x83);
           rx_state = 0;
           break;
         case 0x04:
@@ -447,7 +567,7 @@ void loop() {
           Serial.println(c);
 #endif
           // 0x44 is an erase failure, never acknowledge a failed erase as success.
-          Serial.write(c ? 0x84 : 0x44);
+          if (!c2_failed) Serial.write(c ? 0x84 : 0x44);
           rx_state = 0;
           break;
         case 0x05:
@@ -457,24 +577,30 @@ void loop() {
             rx_state = 0;
             break;
           }
-          Serial.write(0x85);
           addr = (((unsigned long)(rx_message[3]))<<16) + (((unsigned long)(rx_message[4]))<<8) + (((unsigned long)(rx_message[5]))<<0);
           c2_read_flash_block(addr,flash_buffer,rx_message[2]);
-          for (i=0;i<rx_message[2];i++) {
-            Serial.write(flash_buffer[i]);
+          if (!c2_failed) {
+            // Complete C2 work before acknowledging; never send a partial dump.
+            Serial.write(0x85);
+            for (i=0;i<rx_message[2];i++) {
+              Serial.write(flash_buffer[i]);
+            }
           }
           rx_state = 0;
           break;
         case 0x06:
           c2_write_addr(rx_message[3]);
           c2_write_data(rx_message[4]);
-          Serial.write(0x86);
+          if (!c2_failed) Serial.write(0x86);
           rx_state = 0;
           break;
         case 0x07:
           c2_write_addr(rx_message[3]);
-          Serial.write(c2_read_data());
-          Serial.write(0x87);
+          c = c2_read_data();
+          if (!c2_failed) {
+            Serial.write(c);
+            Serial.write(0x87);
+          }
           rx_state = 0;
           break;
         case 0x08:
@@ -497,6 +623,11 @@ void loop() {
           switch_esc(4);
           rx_state = 0;
           break;
+      }
+      if (c2_failed && rx_message[0] >= 0x01 && rx_message[0] <= 0x07) {
+        teardown();
+        Serial.write(c2_error);
+        rx_state = 0;
       }
     }
   }

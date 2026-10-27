@@ -12,10 +12,10 @@ class PI():
         print(f"Serial opened: {com}, baud={self.ser.baudrate}, timeout={self.ser.timeout}s", flush=True)
         time.sleep(2)
 
-    def expect_ack(self, expected, operation):
+    def expect_ack(self, expected, operation, timeout=5):
         """Read a binary acknowledgement, allowing #DBG lines from the Uno."""
         started = time.monotonic()
-        deadline = started + 5
+        deadline = started + timeout
         print(f"[TX] {operation}: waiting for 0x{expected:02x}", flush=True)
         while time.monotonic() < deadline:
             response = self.ser.read(1)
@@ -27,31 +27,52 @@ class PI():
                 continue
             elapsed = time.monotonic() - started
             print(f"[RX] {operation}: {response.hex(' ')} after {elapsed:.3f}s", flush=True)
+            if response == b'\x40':
+                raise TimeoutError("Arduino C2 timeout: clock stopped and programming pins released; reset or initialize before retrying")
+            if response == b'\x41':
+                raise RuntimeError("Target rejected C2 block operation; see Arduino stage/status above")
+            if response == b'\x42':
+                raise RuntimeError("C2 initialization failed: target returned device ID 0xff; check clock/data connections and target power")
             if response == b'\x44':
                 raise RuntimeError("Target erase failed; flashing stopped. See Arduino C2 status above.")
             if response != bytes([expected]):
                 raise RuntimeError(f"{operation}: expected 0x{expected:02x}, received {response!r}")
             return
         raise TimeoutError(
-            f"{operation}: no acknowledgement 0x{expected:02x} within 5s; "
+            f"{operation}: no acknowledgement 0x{expected:02x} within {timeout}s; "
             f"serial bytes pending={self.ser.in_waiting}. "
             "Check the last Arduino C2 stage above (if the debug sketch is installed)."
         )
 
 
     def conf(self):
-
-        # init Programming Interface (PI)
-        while True:
-            try:
-                self.ser.write(b'\x01\x00')
-                self.expect_ack(0x81, "PI init (01 00)")
-                break
-            except Exception as exc:
-                print (f"error com: {exc}")
-                sys.exit(1)
+        # Let failures propagate so a block retry can recover from init errors.
+        self.ser.write(b'\x01\x00')
+        self.expect_ack(0x81, "PI init (01 00)")
         time.sleep(0.5)
         print ("PI initiated")
+
+    def write_block(self, buf, address, max_attempts=5):
+        data = bytes.fromhex(buf)
+        addrh, addrl = address >> 8, address & 0xff
+        crc = (addrh + addrl + sum(data)) & 0xff
+        packet = bytes([0x03, len(data) + 5, len(data), 0, addrh, addrl, crc]) + data
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if attempt > 1:
+                    # Wait beyond the Uno's 1s C2 command deadline before flushing
+                    # late responses. PI init resets the target and clears its latch.
+                    time.sleep(1.1)
+                    self.ser.reset_input_buffer()
+                    self.conf()
+                self.ser.write(packet)
+                self.expect_ack(0x83, f"Flash write at 0x{address:04x}, {len(data)} bytes, attempt {attempt}/{max_attempts}")
+                self.check_written(buf, len(data), address)
+                return
+            except (TimeoutError, RuntimeError) as exc:
+                print(f"Block 0x{address:04x} attempt {attempt}/{max_attempts} failed: {exc}", flush=True)
+                if attempt == max_attempts:
+                    raise RuntimeError(f"Flashing stopped at 0x{address:04x} after {max_attempts} attempts: {exc}") from exc
 
     def check_written(self, buf, buf_size, address):
         # Four payload bytes: count, address[23:16], address[15:8], address[7:0].
@@ -100,7 +121,8 @@ class PI():
         print(f'Switched to ESC {esc_index}')
         # erase device
         self.ser.write(b'\x04\x00')
-        self.expect_ack(0x84, "Device erase (04 00)")
+        # Allow the Uno's 10s erase deadline plus serial/diagnostic overhead.
+        self.expect_ack(0x84, "Device erase (04 00)", timeout=12)
 
         print ("Device erased")
 		
@@ -122,24 +144,7 @@ class PI():
             buf_size += size
 
             if buf_size >= 256-0x20 or i == f[-2] or (not self._isNextAddressAdjacent(i, f[f.index(i)+1])): #The hex file is not always in address order. We need to check this before concatenating the lines
-                while True:
-                    try:
-                        crc = addrh + addrl
-                        for i in range(0,len(buf),2):
-                            val=buf[i]+buf[i+1]
-                            crc+=int(val,16)
-                        assert(len(buf)/2 == buf_size)
-                        self.ser.write([0x3, buf_size + 4 + 1, buf_size, 0, addrh, addrl, crc & 0xff])
-                        for i in range(0,len(buf),2):
-                            val=buf[i]+buf[i+1]
-                            string = bytes.fromhex(val)
-                            self.ser.write(string)
-                        self.expect_ack(0x83, f"Flash write at 0x{addrh:02x}{addrl:02x}, {buf_size} bytes")
-                        self.check_written(buf,buf_size, (addrh << 8) | addrl)
-                        break
-                    except Exception as e:
-                        # Late replies could be mistaken for ACKs if we retry here.
-                        raise RuntimeError(f"Flashing stopped at 0x{addrh:02x}{addrl:02x}: {e}") from e
+                self.write_block(buf, (addrh << 8) | addrl)
                 total += buf_size
                 buf_size = 0
                 buf = ''
